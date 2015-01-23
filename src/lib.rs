@@ -7,6 +7,8 @@
 #![allow(unstable)] // remove this when Rust is in beta
 
 extern crate libc;
+#[macro_use]
+extern crate log;
 
 pub mod colormap;
 pub mod cursor;

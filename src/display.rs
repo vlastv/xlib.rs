@@ -57,19 +57,26 @@ pub struct Display {
 }
 
 impl Display {
-  pub fn alloc_color (&mut self, colormap: Colormap, color: Color) -> Option<u32> {
+  pub fn alloc_color (&mut self, colormap: Colormap, color: Color) -> Option<Color> {
     unsafe {
       let mut xcolor = color.to_native();
       if ::ffi::XAllocColor(self.ptr, colormap as c_ulong, &mut xcolor) == 0 {
         return None;
       }
-      return Some(xcolor.pixel as u32);
+      return Some(FromNative::from_native(xcolor));
     }
   }
 
   pub fn black_pixel (&mut self, screen_num: i32) -> u32 {
     unsafe {
       return ::ffi::XBlackPixel(self.ptr, screen_num as c_int) as u32;
+    }
+  }
+
+  pub fn create_colormap (&mut self, window: Window, visual: Visual, alloc: bool) -> Colormap {
+    unsafe {
+      return ::ffi::XCreateColormap(self.ptr, window as c_ulong, visual.to_native(),
+          if alloc {::ffi::AllocAll} else {::ffi::AllocNone}) as Colormap;
     }
   }
 
@@ -134,6 +141,12 @@ impl Display {
     }
   }
 
+  pub fn free_colormap (&mut self, colormap: Colormap) {
+    unsafe {
+      ::ffi::XFreeColormap(self.ptr, colormap as c_ulong);
+    }
+  }
+
   pub fn get_geometry (&mut self, drawable: Drawable) -> Option<Geometry> {
     unsafe {
       let mut root = 0;
@@ -172,24 +185,16 @@ impl Display {
       if let Some(attr) = FromNative::from_native(xattr) {
         return Some(attr);
       } else {
-        panic!("XGetWindowAttributes returned invalid data");
+        error!("XGetWindowAttributes returned invalid data");
+        return None;
       }
     }
   }
 
-  pub fn intern_atom (&mut self, name: &str) -> Atom {
+  pub fn intern_atom (&mut self, name: &str, only_if_exists: bool) -> Option<Atom> {
     unsafe {
       let name_c_str = CString::from_slice(name.as_bytes());
-      let atom = ::ffi::XInternAtom(self.ptr, name_c_str.as_ptr(), 0);
-      assert!(atom != 0);
-      return atom as Atom;
-    }
-  }
-
-  pub fn intern_atom_existing (&mut self, name: &str) -> Option<Atom> {
-    unsafe {
-      let name_c_str = CString::from_slice(name.as_bytes());
-      let atom = ::ffi::XInternAtom(self.ptr, name_c_str.as_ptr(), 1);
+      let atom = ::ffi::XInternAtom(self.ptr, name_c_str.as_ptr(), if only_if_exists {1} else {0});
       if atom == 0 {
         return None;
       } else {
@@ -270,13 +275,15 @@ impl Display {
     }
   }
 
-  pub fn set_wm_protocols (&mut self, window: Window, protocols: &[Atom]) -> bool {
+  pub fn set_wm_protocols (&mut self, window: Window, protocols: &[Atom]) {
     unsafe {
       let mut protocol_vec: Vec<c_ulong> = Vec::with_capacity(protocols.len());
       for protocol in protocols.iter() {
         protocol_vec.push(*protocol as c_ulong);
       }
-      return ::ffi::XSetWMProtocols(self.ptr, window as c_ulong, &protocol_vec[0], protocols.len() as c_int) != 0;
+      if ::ffi::XSetWMProtocols(self.ptr, window as c_ulong, &protocol_vec[0], protocols.len() as c_int) == 0 {
+        error!("XSetWMProtocols failed");
+      }
     }
   }
 

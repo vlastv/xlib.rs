@@ -3,12 +3,14 @@
 
 use libc::{
   c_char,
+  c_ulong,
   c_ushort,
 };
 
 use ::display::Xid;
 use ::internal::{
   FieldMask,
+  FromNative,
   ToNative,
 };
 
@@ -21,8 +23,9 @@ pub type Colormap = Xid;
 //
 
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct Color {
+  pub pixel: u32,
   pub red: Option<u16>,
   pub green: Option<u16>,
   pub blue: Option<u16>,
@@ -38,10 +41,21 @@ impl FieldMask<c_char> for Color {
   }
 }
 
+impl FromNative<::ffi::XColor> for Color {
+  fn from_native (xcolor: ::ffi::XColor) -> Color {
+    Color {
+      pixel: xcolor.pixel as u32,
+      red: if xcolor.flags & 0x01 == 0 {None} else {Some(xcolor.red as u16)},
+      green: if xcolor.flags & 0x02 == 0 {None} else {Some(xcolor.green as u16)},
+      blue: if xcolor.flags & 0x04 == 0 {None} else {Some(xcolor.blue as u16)},
+    }
+  }
+}
+
 impl ToNative<::ffi::XColor> for Color {
   fn to_native (&self) -> ::ffi::XColor {
     ::ffi::XColor {
-      pixel: 0,
+      pixel: self.pixel as c_ulong,
       red: if let Some(n) = self.red {n as c_ushort} else {0},
       green: if let Some(n) = self.green {n as c_ushort} else {0},
       blue: if let Some(n) = self.blue {n as c_ushort} else {0},

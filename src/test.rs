@@ -1,7 +1,10 @@
 // Copyright (c) 2015, <daggerbot@gmail.com>
 // All rights reserved.
 
-use ::display::Display;
+use ::display::{
+  Atom,
+  Display,
+};
 use ::event::{
   ClientMessageData,
   Event,
@@ -19,22 +22,17 @@ fn test () {
   }
 
   // get atoms
-  let atom_wm_delete_window = display.intern_atom("WM_DELETE_WINDOW");
-  let atom_wm_protocols = display.intern_atom("WM_PROTOCOLS");
+  let atom_wm_delete_window = force_intern_atom(&mut display, "WM_DELETE_WINDOW");
+  let atom_wm_protocols = force_intern_atom(&mut display, "WM_PROTOCOLS");
 
   // create window
   let screen_num = display.default_screen();
   let root = display.root_window(screen_num);
   let border = display.black_pixel(screen_num);
   let background = display.white_pixel(screen_num);
-
   let window = display.create_simple_window(root, 0, 0, 640, 480, 0, border, background);
-
   display.store_name(window, "Xlib Test");
-  if !display.set_wm_protocols(window, &[atom_wm_delete_window]) {
-    panic!("can't set WM protocols");
-  }
-
+  display.set_wm_protocols(window, &[atom_wm_delete_window]);
   display.map_window(window);
 
   // main loop
@@ -51,5 +49,13 @@ fn test () {
       },
 //      _ => {},
     }
+  }
+}
+
+fn force_intern_atom (display: &mut Display, name: &str) -> Atom {
+  if let Some(atom) = display.intern_atom(name, false) {
+    return atom;
+  } else {
+    panic!("failed to retrieve atom: {}", name);
   }
 }
