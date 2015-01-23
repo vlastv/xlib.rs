@@ -2,12 +2,12 @@
 // All rights reserved.
 
 use std;
-use std::default::Default;
 use libc::{
   c_char,
   c_int,
   c_long,
   c_short,
+  c_uchar,
   c_uint,
   c_ulong,
   c_ushort,
@@ -47,6 +47,7 @@ extern "C" {
   pub fn XFree (mem: *mut c_void);
   pub fn XFreeColormap (display: *mut Display, colormap: Colormap);
   pub fn XFreeGC (display: *mut Display, gc: GC);
+  pub fn XGetErrorText (display: *mut Display, code: c_int, buffer: *mut c_char, len: c_int);
   pub fn XGetGeometry (display: *mut Display, drawable: Drawable, root_return: *mut Window, x_result: *mut c_int,
       y_return: *mut c_int, width_return: *mut c_uint, height_return: *mut c_uint, border_width_return: *mut c_uint,
       depth_return: *mut c_uint) -> Status;
@@ -66,7 +67,9 @@ extern "C" {
       -> Bool;
   pub fn XSetClipRectangles (display: *mut Display, gc: GC, clip_x_origin: c_int, clip_y_origin: c_int,
       rectangles: *const XRectangle, num_rectangles: c_int, ordering: c_int);
+  pub fn XSetErrorHandler (handler: ErrorHandler) -> ErrorHandler;
   pub fn XSetForeground (display: *mut Display, gc: GC, pixel: c_ulong);
+  pub fn XSetIOErrorHandler (handler: IoErrorHandler) -> IoErrorHandler;
   pub fn XSetWMNormalHints (display: *mut Display, window: Window, hints: *const XSizeHints);
   pub fn XSetWMProtocols (display: *mut Display, window: Window, protocols: *const Atom, count: c_int) -> Status;
   pub fn XStoreName (display: *mut Display, window: Window, name: *const c_char);
@@ -96,6 +99,10 @@ pub type VisualID = XID;
 pub type Window = XID;
 pub type XID = c_ulong;
 
+// function pointer types
+pub type ErrorHandler = unsafe extern "C" fn (*mut Display, *const XErrorEvent) -> c_int;
+pub type IoErrorHandler = unsafe extern "C" fn (*mut Display) -> c_int;
+
 // opaque structs
 #[repr(C)] pub struct Display;
 #[repr(C)] pub struct GLXContext_Rec;
@@ -107,7 +114,7 @@ pub type GLXContext = *mut GLXContext_Rec;
 pub type GLXFBConfig = *mut GLXFBConfig_Rec;
 
 // Point
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct Point {
   pub x: c_int,
@@ -180,7 +187,7 @@ impl XClientMessageEvent {
 }
 
 // XColor
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct XColor {
   pub pixel: c_ulong,
@@ -224,6 +231,20 @@ pub struct XDestroyWindowEvent {
   pub window: Window,
 }
 
+// XErrorEvent
+#[allow(raw_pointer_derive)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct XErrorEvent {
+  pub kind: c_int,
+  pub display: *mut Display,
+  pub serial: c_ulong,
+  pub error_code: c_uchar,
+  pub request_code: c_uchar,
+  pub minor_code: c_uchar,
+  pub resourceid: XID,
+}
+
 // XEvent
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -257,7 +278,7 @@ pub struct XExposeEvent {
 }
 
 // XGCValues
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct XGCValues {
   pub function: c_int,
@@ -300,7 +321,7 @@ pub struct XMapEvent {
 }
 
 // XRectangle
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct XRectangle {
   pub x: c_short,
@@ -310,7 +331,7 @@ pub struct XRectangle {
 }
 
 // XSetWindowAttributes
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct XSetWindowAttributes {
   pub background_pixmap: Pixmap,
@@ -331,7 +352,7 @@ pub struct XSetWindowAttributes {
 }
 
 // XSizeHints
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct XSizeHints {
   pub flags: c_long,
@@ -354,7 +375,7 @@ pub struct XSizeHints {
 
 // XUnmapEvent
 #[allow(raw_pointer_derive)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct XUnmapEvent {
   pub kind: c_int,
@@ -368,7 +389,7 @@ pub struct XUnmapEvent {
 
 // XVisualInfo
 #[allow(raw_pointer_derive)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct XVisualInfo {
   pub visual: *const Visual,
@@ -419,12 +440,6 @@ pub struct XWindowAttributes {
 //
 
 
-// clip rect ordering
-pub const Unsorted: c_int = 0;
-pub const YSorted: c_int = 1;
-pub const YXSorted: c_int = 2;
-pub const YXBanded: c_int = 3;
-
 // colormap allocation
 pub const AllocNone: c_int = 0;
 pub const AllocAll: c_int = 0;
@@ -463,71 +478,3 @@ pub const SelectionNotify: c_int = 31;
 pub const ColormapNotify: c_int = 32;
 pub const ClientMessage: c_int = 33;
 pub const MappingNotify: c_int = 34;
-
-// map static
-pub const IsUnmapped: c_int = 0;
-pub const IsUnviewable: c_int = 1;
-pub const IsViewable: c_int = 2;
-
-// size hints mask
-pub const USPosition: c_long = 0x0001;
-pub const USSize: c_long = 0x0002;
-pub const PPosition: c_long = 0x0004;
-pub const PSize: c_long = 0x0008;
-pub const PMinSize: c_long = 0x0010;
-pub const PMaxSize: c_long = 0x0020;
-pub const PResizeInc: c_long = 0x0040;
-pub const PAspect: c_long = 0x0080;
-pub const PBaseSize: c_long = 0x0100;
-pub const PWinGravity: c_long = 0x0200;
-pub const PAllHints: c_long = PPosition | PSize | PMinSize | PMaxSize | PResizeInc | PAspect;
-
-// visual class
-pub const StaticGray: c_int = 0;
-pub const GrayScale: c_int = 1;
-pub const StaticColor: c_int = 2;
-pub const PseudoColor: c_int = 3;
-pub const TrueColor: c_int = 4;
-pub const DirectColor: c_int = 5;
-
-// visual info mask
-pub const VisualNoMask: c_long = 0;
-pub const VisualIDMask: c_long = 0x0001;
-pub const VisualScreenMask: c_long = 0x0002;
-pub const VisualDepthMask: c_long = 0x0004;
-pub const VisualClassMask: c_long = 0x0008;
-pub const VisualRedMaskMask: c_long = 0x0010;
-pub const VisualGreenMaskMask: c_long = 0x0020;
-pub const VisualBlueMaskMask: c_long = 0x0040;
-pub const VisualColormapSizeMask: c_long = 0x0080;
-pub const VisualBitsPerRGBMask: c_long = 0x0100;
-pub const VisualAllMask: c_long = 0x01ff;
-
-// window class
-pub const InputOutput: c_uint = 1;
-pub const InputOnly: c_uint = 2;
-
-
-//
-// local impls
-//
-
-
-impl Default for *mut Display {
-  fn default () -> *mut Display {
-    std::ptr::null_mut()
-  }
-}
-
-impl Default for *const Screen {
-  fn default () -> *const Screen {
-    std::ptr::null()
-  }
-}
-
-impl Default for *const Visual {
-  fn default () -> *const Visual {
-    std::ptr::null()
-  }
-}
-

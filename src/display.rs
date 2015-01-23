@@ -7,6 +7,11 @@ use std::ptr::{
   null,
   null_mut,
 };
+use std::sync::atomic::{
+  AtomicBool,
+  Ordering,
+  ATOMIC_BOOL_INIT,
+};
 
 use libc::{
   c_char,
@@ -28,12 +33,22 @@ use ::event::{
   Event,
   EventMask,
 };
+use ::gc::{
+  ClipOrdering,
+  Gcid,
+  GcValues,
+  Rectangle,
+};
 use ::internal::{
   FieldMask,
   FromNative,
   ToNative,
 };
-use ::visual::Visual;
+use ::visual::{
+  Visual,
+  VisualInfo,
+  VisualTemplate,
+};
 use ::window::{
   SetWindowAttributes,
   SizeHints,
@@ -69,6 +84,9 @@ impl Display {
 
   pub fn black_pixel (&mut self, screen_num: i32) -> u32 {
     unsafe {
+      if screen_num < 0 || screen_num >= self.screen_count() {
+        return 0;
+      }
       return ::ffi::XBlackPixel(self.ptr, screen_num as c_int) as u32;
     }
   }
@@ -77,6 +95,13 @@ impl Display {
     unsafe {
       return ::ffi::XCreateColormap(self.ptr, window as c_ulong, visual.to_native(),
           if alloc {::ffi::AllocAll} else {::ffi::AllocNone}) as Colormap;
+    }
+  }
+
+  pub fn create_gc (&mut self, drawable: Drawable, values: GcValues) -> Gcid {
+    unsafe {
+      let xgcvalues = values.to_native();
+      return ::ffi::XCreateGC(self.ptr, drawable as c_ulong, values.field_mask(), &xgcvalues) as Gcid;
     }
   }
 
@@ -102,15 +127,47 @@ impl Display {
     }
   }
 
+  pub fn default_colormap (&mut self, screen_num: i32) -> Colormap {
+    unsafe {
+      if screen_num < 0 || screen_num >= self.screen_count() {
+        return 0;
+      }
+      return ::ffi::XDefaultColormap(self.ptr, screen_num as c_int) as Colormap;
+    }
+  }
+
   pub fn default_screen (&mut self) -> i32 {
     unsafe {
       return ::ffi::XDefaultScreen(self.ptr) as i32;
     }
   }
 
+  pub fn default_visual (&mut self, screen_num: i32) -> Visual {
+    unsafe {
+      if screen_num < 0 || screen_num >= self.screen_count() {
+        return FromNative::from_native(null());
+      }
+      return FromNative::from_native(::ffi::XDefaultVisual(self.ptr, screen_num as c_int));
+    }
+  }
+
   pub fn destroy_window (&mut self, window: Window) {
     unsafe {
       return ::ffi::XDestroyWindow(self.ptr, window as c_ulong);;
+    }
+  }
+
+  pub fn draw_line (&mut self, drawable: Drawable, gc: Gcid, x0: i32, y0: i32, x1: i32, y1: i32) {
+    unsafe {
+      ::ffi::XDrawLine(self.ptr, drawable as c_ulong, gc as c_ulong, x0 as c_int, y0 as c_int,
+          x1 as c_int, y1 as c_int);
+    }
+  }
+
+  pub fn draw_rectangle (&mut self, drawable: Drawable, gc: Gcid, x: i32, y: i32, width: i32, height: i32) {
+    unsafe {
+      ::ffi::XDrawRectangle(self.ptr, drawable as c_ulong, gc as c_ulong, x as c_int, y as c_int,
+          width as c_uint, height as c_uint);
     }
   }
 
@@ -135,6 +192,13 @@ impl Display {
     }
   }
 
+  pub fn fill_rectangle (&mut self, drawable: Drawable, gc: Gcid, x: i32, y: i32, width: i32, height: i32) {
+    unsafe {
+      ::ffi::XFillRectangle(self.ptr, drawable as c_ulong, gc as c_ulong, x as c_int, y as c_int,
+          width as c_uint, height as c_uint);
+    }
+  }
+
   pub fn flush (&mut self) {
     unsafe {
       ::ffi::XFlush(self.ptr);
@@ -144,6 +208,12 @@ impl Display {
   pub fn free_colormap (&mut self, colormap: Colormap) {
     unsafe {
       ::ffi::XFreeColormap(self.ptr, colormap as c_ulong);
+    }
+  }
+
+  pub fn free_gc (&mut self, gc: Gcid) {
+    unsafe {
+      ::ffi::XFreeGC(self.ptr, gc as c_ulong);
     }
   }
 
@@ -173,6 +243,29 @@ impl Display {
         depth: depth as i32,
       };
       return Some(geometry);
+    }
+  }
+
+  pub fn get_visual_info (&mut self, template: VisualTemplate) -> Vec<VisualInfo> {
+    unsafe {
+      let mut info_vec = Vec::new();
+      let xtemplate = template.to_native();
+      let mut nitems = 0;
+      let xinfo_ptr = ::ffi::XGetVisualInfo(self.ptr, template.field_mask(), &xtemplate, &mut nitems);
+      if xinfo_ptr == null_mut() {
+        return info_vec;
+      }
+      let xinfo_const_ptr = xinfo_ptr as *const ::ffi::XVisualInfo;
+      let xinfo_slice = ::std::slice::from_raw_buf(&xinfo_const_ptr, nitems as usize);
+      for xinfo in xinfo_slice.iter() {
+        if let Some(info) = FromNative::from_native(*xinfo) {
+          info_vec.push(info);
+        } else {
+          error!("XGetVisualInfo returned invalid data");
+        }
+      }
+      ::ffi::XFree(xinfo_ptr as *mut c_void);
+      return info_vec;
     }
   }
 
@@ -209,6 +302,12 @@ impl Display {
     }
   }
 
+  pub fn move_window (&mut self, window: Window, x: i32, y: i32) {
+    unsafe {
+      ::ffi::XMoveWindow(self.ptr, window as c_ulong, x as c_int, y as c_int);
+    }
+  }
+
   pub fn next_event (&mut self) -> Event {
     unsafe {
       let mut xevent: ::ffi::XEvent = zeroed();
@@ -223,6 +322,7 @@ impl Display {
 
   pub fn open (name: &str) -> Option<Display> {
     unsafe {
+      init();
       let name_c_str = CString::from_slice(name.as_bytes());
       let ptr = ::ffi::XOpenDisplay(name_c_str.as_ptr());
       if ptr == null_mut() {
@@ -237,6 +337,7 @@ impl Display {
 
   pub fn open_default () -> Option<Display> {
     unsafe {
+      init();
       let ptr = ::ffi::XOpenDisplay(null());
       if ptr == null_mut() {
         return None;
@@ -254,9 +355,24 @@ impl Display {
     }
   }
 
+  pub fn resize_window (&mut self, window: Window, width: i32, height: i32) {
+    unsafe {
+      ::ffi::XResizeWindow(self.ptr, window as c_ulong, width as c_uint, height as c_uint);
+    }
+  }
+
   pub fn root_window (&mut self, screen_num: i32) -> Window {
     unsafe {
-      ::ffi::XRootWindow(self.ptr, screen_num as c_int) as Window
+      if screen_num < 0 || screen_num >= self.screen_count() {
+        return 0;
+      }
+      return ::ffi::XRootWindow(self.ptr, screen_num as c_int) as Window;
+    }
+  }
+
+  pub fn screen_count (&mut self) -> i32 {
+    unsafe {
+      return ::ffi::XScreenCount(self.ptr);
     }
   }
 
@@ -265,6 +381,25 @@ impl Display {
       let xevent = event.to_native();
       let window = (*(&xevent as *const ::ffi::XEvent as *const ::ffi::XAnyEvent)).window;
       return ::ffi::XSendEvent(self.ptr, window, if propagate {1} else {0}, event_mask.to_native(), &xevent) != 0;
+    }
+  }
+
+  pub fn set_clip_rectangles (&mut self, gc: Gcid, x_origin: i32, y_origin: i32, rects: &[Rectangle],
+      ordering: ClipOrdering)
+  {
+    unsafe {
+      let mut xrects: Vec<::ffi::XRectangle> = Vec::with_capacity(rects.len());
+      for rect in rects.iter() {
+        xrects.push(rect.to_native());
+      }
+      ::ffi::XSetClipRectangles(self.ptr, gc as c_ulong, x_origin as c_int, y_origin as c_int, &xrects[0],
+          xrects.len() as c_int, ordering.to_native());
+    }
+  }
+
+  pub fn set_foreground (&mut self, gc: Gcid, pixel: u32) {
+    unsafe {
+      ::ffi::XSetForeground(self.ptr, gc as c_ulong, pixel as c_ulong);
     }
   }
 
@@ -302,6 +437,9 @@ impl Display {
 
   pub fn white_pixel (&mut self, screen_num: i32) -> u32 {
     unsafe {
+      if screen_num < 0 || screen_num >= self.screen_count() {
+        return 0;
+      }
       return ::ffi::XWhitePixel(self.ptr, screen_num as c_int) as u32;
     }
   }
@@ -311,6 +449,41 @@ impl Drop for Display {
   fn drop (&mut self) {
     unsafe {
       ::ffi::XCloseDisplay(self.ptr);
+    }
+  }
+}
+
+
+//
+// initialize before connecting
+//
+
+
+static mut _was_init: AtomicBool = ATOMIC_BOOL_INIT;
+
+unsafe extern "C"
+fn handle_error (display: *mut ::ffi::Display, event: *const ::ffi::XErrorEvent) -> c_int {
+  let mut error_buf = [0u8; 64];
+  let error_ptr = &mut error_buf[0] as *mut u8 as *mut c_char;
+  ::ffi::XGetErrorText(display, (*event).error_code as c_int, error_ptr, error_buf.len() as c_int);
+  let error_string = String::from_utf8_lossy(&error_buf[]).into_owned();
+  error!("Xlib: Serial {}, Error Code {} ({}), Request Code {}, Minor Code {}, Resource ID {}",
+      (*event).serial, (*event).error_code, error_string, (*event).request_code, (*event).minor_code,
+      (*event).resourceid);
+  return 0;
+}
+
+#[allow(unused_variables)]
+unsafe extern "C"
+fn handle_io_error (display: *mut ::ffi::Display) -> c_int {
+  panic!("Xlib: A fatal I/O error has occurred!");
+}
+
+fn init () {
+  unsafe {
+    if !_was_init.swap(false, Ordering::SeqCst) {
+      ::ffi::XSetErrorHandler(handle_error);
+      ::ffi::XSetIOErrorHandler(handle_io_error);
     }
   }
 }

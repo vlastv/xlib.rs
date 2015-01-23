@@ -149,7 +149,7 @@ impl ToNative<::ffi::XEvent> for Event {
 //
 
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct EventMask {
   pub key_press: bool,
   pub key_release: bool,
@@ -179,7 +179,7 @@ pub struct EventMask {
 }
 
 impl EventMask {
-  pub fn none () -> EventMask {
+  pub fn empty () -> EventMask {
     EventMask {
       key_press: false,
       key_release: false,

@@ -15,6 +15,8 @@ pub mod cursor;
 pub mod display;
 pub mod drawable;
 pub mod event;
+pub mod font;
+pub mod gc;
 pub mod pixmap;
 pub mod screen;
 pub mod visual;
