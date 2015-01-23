@@ -9,6 +9,7 @@ use std::ptr::null_mut;
 
 use libc::{
   c_char,
+  c_int,
   c_long,
   c_short,
   c_ulong,
@@ -49,6 +50,119 @@ pub struct ClientMessageEvent {
   pub data: ClientMessageData,
 }
 
+impl FromNative<::ffi::XClientMessageEvent> for Option<ClientMessageEvent> {
+  fn from_native (xclient: ::ffi::XClientMessageEvent) -> Option<ClientMessageEvent> {
+    let data;
+    match xclient.format {
+      8 => {
+        let mut array: [u8; 20] = [0; 20];
+        for i in 0..20us {
+          array[i] = xclient.get_byte(i) as u8;
+        }
+        data = ClientMessageData::Byte(array);
+      },
+      16 => {
+        let mut array: [u16; 10] = [0; 10];
+        for i in 0..10us {
+          array[i] = xclient.get_short(i) as u16;
+        }
+        data = ClientMessageData::Short(array);
+      },
+      32 => {
+        let mut array: [u32; 5] = [0; 5];
+        for i in 0..5us {
+          array[i] = xclient.get_long(i) as u32;
+        }
+        data = ClientMessageData::Long(array);
+      },
+      _ => {
+        return None;
+      },
+    }
+    let e = ClientMessageEvent {
+      serial: xclient.serial as u32,
+      send_event: xclient.send_event != 0,
+      window: xclient.window as Window,
+      message_type: xclient.message_type as Atom,
+      data: data,
+    };
+    return Some(e);
+  }
+}
+
+impl ToNative<::ffi::XEvent> for ClientMessageEvent {
+  fn to_native (&self) -> ::ffi::XEvent {
+    unsafe {
+      let mut xclient: ::ffi::XClientMessageEvent = zeroed();
+      xclient.kind = ::ffi::ClientMessage;
+      xclient.serial = self.serial as c_ulong;
+      xclient.send_event = if self.send_event {1} else {0};
+      xclient.display = null_mut();
+      xclient.window = self.window as c_ulong;
+      xclient.message_type = self.message_type as c_ulong;
+      match self.data {
+        ClientMessageData::Byte(ref array) => {
+          for i in 0..20us {
+            xclient.set_byte(i, array[i] as c_char);
+          }
+        },
+        ClientMessageData::Short(ref array) => {
+          for i in 0..10us {
+            xclient.set_short(i, array[i] as c_short);
+          }
+        },
+        ClientMessageData::Long(ref array) => {
+          for i in 0..5us {
+            xclient.set_long(i, array[i] as c_long);
+          }
+        },
+      }
+      return reinterpret(&xclient);
+    }
+  }
+}
+
+
+//
+// DestroyWindowEvent
+//
+
+
+#[derive(Clone, Copy)]
+pub struct DestroyWindowEvent {
+  pub serial: u32,
+  pub send_event: bool,
+  pub event: Window,
+  pub window: Window,
+}
+
+impl FromNative<::ffi::XDestroyWindowEvent> for DestroyWindowEvent {
+  fn from_native (xdestroy: ::ffi::XDestroyWindowEvent) -> DestroyWindowEvent {
+    DestroyWindowEvent {
+      serial: xdestroy.serial as u32,
+      send_event: xdestroy.send_event != 0,
+      event: xdestroy.event as Window,
+      window: xdestroy.window as Window,
+    }
+  }
+}
+
+impl ToNative<::ffi::XEvent> for DestroyWindowEvent {
+  fn to_native (&self) -> ::ffi::XEvent {
+    unsafe {
+      let xdestroy = ::ffi::XDestroyWindowEvent {
+        kind: ::ffi::DestroyNotify,
+        serial: self.serial as c_ulong,
+        send_event: if self.send_event {1} else {0},
+        display: null_mut(),
+        event: self.event as c_ulong,
+        window: self.window as c_ulong,
+      };
+      return reinterpret(&xdestroy);
+    }
+  }
+}
+
 
 //
 // Event
@@ -58,6 +172,8 @@ pub struct ClientMessageEvent {
 #[derive(Clone, Copy)]
 pub enum Event {
   ClientMessage(ClientMessageEvent),
+  DestroyWindow(DestroyWindowEvent),
+  Expose(ExposeEvent),
 }
 
 impl FromNative<::ffi::XEvent> for Option<Event> {
@@ -65,43 +181,15 @@ impl FromNative<::ffi::XEvent> for Option<Event> {
     unsafe {
       match xevent.kind() {
         ::ffi::ClientMessage => {
-          let xclient: ::ffi::XClientMessageEvent = reinterpret(&xevent);
-          let data;
-          match xclient.format {
-            8 => {
-              let mut array: [u8; 20] = [0; 20];
-              for i in 0..20us {
-                array[i] = xclient.get_byte(i) as u8;
-              }
-              data = ClientMessageData::Byte(array);
-            },
-            16 => {
-              let mut array: [u16; 10] = [0; 10];
-              for i in 0..10us {
-                array[i] = xclient.get_short(i) as u16;
-              }
-              data = ClientMessageData::Short(array);
-            },
-            32 => {
-              let mut array: [u32; 5] = [0; 5];
-              for i in 0..5us {
-                array[i] = xclient.get_long(i) as u32;
-              }
-              data = ClientMessageData::Long(array);
-            },
-            _ => { return None; },
+          if let Some(e) = FromNative::from_native(reinterpret(&xevent)) {
+            Some(Event::ClientMessage(e))
+          } else {
+            None
           }
-          let arg = ClientMessageEvent {
-            serial: xclient.serial as u32,
-            send_event: xclient.send_event != 0,
-            window: xclient.window as Window,
-            message_type: xclient.message_type as Atom,
-            data: data,
-          };
-          return Some(Event::ClientMessage(arg));
-        },
-
-        _ => { return None; },
+        }
+        ::ffi::DestroyNotify => Some(Event::DestroyWindow(FromNative::from_native(reinterpret(&xevent)))),
+        ::ffi::Expose => Some(Event::Expose(FromNative::from_native(reinterpret(&xevent)))),
+        _ => None,
       }
     }
   }
@@ -109,36 +197,10 @@ impl FromNative<::ffi::XEvent> for Option<Event> {
 
 impl ToNative<::ffi::XEvent> for Event {
   fn to_native (&self) -> ::ffi::XEvent {
-    unsafe {
-      match *self {
-        Event::ClientMessage(ref arg) => {
-          let mut xclient: ::ffi::XClientMessageEvent = zeroed();
-          xclient.kind = ::ffi::ClientMessage;
-          xclient.serial = arg.serial as c_ulong;
-          xclient.send_event = if arg.send_event {1} else {0};
-          xclient.display = null_mut();
-          xclient.window = arg.window as c_ulong;
-          xclient.message_type = arg.message_type as c_ulong;
-          match arg.data {
-            ClientMessageData::Byte(ref array) => {
-              for i in 0..20us {
-                xclient.set_byte(i, array[i] as c_char);
-              }
-            },
-            ClientMessageData::Short(ref array) => {
-              for i in 0..10us {
-                xclient.set_short(i, array[i] as c_short);
-              }
-            },
-            ClientMessageData::Long(ref array) => {
-              for i in 0..5us {
-                xclient.set_long(i, array[i] as c_long);
-              }
-            },
-          }
-          return reinterpret(&xclient);
-        },
-      }
+    match *self {
+      Event::ClientMessage(ref e) => e.to_native(),
+      Event::DestroyWindow(ref e) => e.to_native(),
+      Event::Expose(ref e) => e.to_native(),
     }
   }
 }
@@ -271,6 +333,59 @@ impl ToNative<c_long> for EventMask {
     if self.colormap_change { ord |= 0x0080_0000; }
     if self.owner_grab_button { ord |= 0x0100_0000; }
     return ord;
+  }
+}
+
+
+//
+// ExposeEvent
+//
+
+
+#[derive(Clone, Copy)]
+pub struct ExposeEvent {
+  pub serial: u32,
+  pub send_event: bool,
+  pub window: Window,
+  pub x: i32,
+  pub y: i32,
+  pub width: i32,
+  pub height: i32,
+  pub count: i32,
+}
+
+impl FromNative<::ffi::XExposeEvent> for ExposeEvent {
+  fn from_native (xexpose: ::ffi::XExposeEvent) -> ExposeEvent {
+    ExposeEvent {
+      serial: xexpose.serial as u32,
+      send_event: xexpose.send_event != 0,
+      window: xexpose.window as Window,
+      x: xexpose.x as i32,
+      y: xexpose.y as i32,
+      width: xexpose.width as i32,
+      height: xexpose.height as i32,
+      count: xexpose.count as i32,
+    }
+  }
+}
+
+impl ToNative<::ffi::XEvent> for ExposeEvent {
+  fn to_native (&self) -> ::ffi::XEvent {
+    unsafe {
+      let xexpose = ::ffi::XExposeEvent {
+        kind: ::ffi::Expose,
+        serial: self.serial as c_ulong,
+        send_event: if self.send_event {1} else {0},
+        display: null_mut(),
+        window: self.window as c_ulong,
+        x: self.x as c_int,
+        y: self.y as c_int,
+        width: self.width as c_int,
+        height: self.height as c_int,
+        count: self.count as c_int,
+      };
+      return reinterpret(&xexpose);
+    }
   }
 }
 
